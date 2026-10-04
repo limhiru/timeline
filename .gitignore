@@ -3,3 +3,9 @@ DerivedData/
 *.xcuserstate
 xcuserdata/
 .build/
+.gradle/
+**/build/
+local.properties
+.idea/
+*.iml
+.kotlin/
