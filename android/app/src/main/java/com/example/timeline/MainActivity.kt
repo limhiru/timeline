@@ -38,6 +38,7 @@ import kotlin.math.*
 
 class MainActivity : ComponentActivity() {
     private val repository get() = (application as TimelineApplication).repository
+    private val automatic by lazy { AutomaticTimelineRepository.get(this) }
     private var pendingAction: String? = null
     private val permissionLauncher = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
         val action = pendingAction; pendingAction = null
@@ -49,7 +50,9 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         setContent {
             val state by repository.state.collectAsState()
-            MaterialTheme(colorScheme = darkColorScheme(primary = Color(0xFF2997FF), background = Color.Black, surface = Color(0xFF111416))) {
+            val automaticState by automatic.state.collectAsState()
+            PhoneShell(state, automaticState, getSharedPreferences("phone-ui", MODE_PRIVATE),
+                intent.getBooleanExtra("timeline_home", false), ::command, { repository.message(null) }) {
                 TimelineScreen(state, ::command, { repository.engine.select(it); repository.publish() }, { repository.message(null) })
             }
         }
@@ -57,11 +60,14 @@ class MainActivity : ComponentActivity() {
     override fun onStart() { super.onStart(); repository.uiVisible = true }
     override fun onStop() { repository.uiVisible = false; super.onStop() }
     private fun command(action: String) {
-        if (action == TrackingService.STOP || action == TrackingService.PAUSE || action == PhoneLocationService.STOP) { runService(action); return }
-        if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+        if (action == TrackingService.STOP || action == TrackingService.PAUSE || action == PhoneLocationService.STOP || action == AutomaticTimelineService.STOP) { runService(action); return }
+        val needsActivity = action == AutomaticTimelineService.START && Build.VERSION.SDK_INT >= 29 &&
+            checkSelfPermission(Manifest.permission.ACTIVITY_RECOGNITION) != PackageManager.PERMISSION_GRANTED
+        if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED || needsActivity) {
             pendingAction = action
             val permissions = mutableListOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION)
             if (Build.VERSION.SDK_INT >= 33) permissions += Manifest.permission.POST_NOTIFICATIONS
+            if (needsActivity) permissions += Manifest.permission.ACTIVITY_RECOGNITION
             permissionLauncher.launch(permissions.toTypedArray())
         } else {
             if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
@@ -72,6 +78,10 @@ class MainActivity : ComponentActivity() {
     }
     private fun runService(action: String) {
         try {
+            if (action == AutomaticTimelineService.STOP) { stopService(Intent(this, AutomaticTimelineService::class.java)); return }
+            if (action == AutomaticTimelineService.START) {
+                startForegroundService(Intent(this, AutomaticTimelineService::class.java).setAction(action)); return
+            }
             if (action == PhoneLocationService.STOP) { stopService(Intent(this, PhoneLocationService::class.java)); return }
             if (action == PhoneLocationService.START) {
                 startForegroundService(Intent(this, PhoneLocationService::class.java).setAction(action)); return
@@ -82,14 +92,14 @@ class MainActivity : ComponentActivity() {
     }
 }
 private val blue = Color(0xFF2997FF)
-private fun dateTime(time: Long, pattern: String) = SimpleDateFormat(pattern, Locale.KOREA).format(Date(time))
+internal fun dateTime(time: Long, pattern: String) = SimpleDateFormat(pattern, Locale.KOREA).format(Date(time))
 private fun kilometers(distance: Double) = String.format(Locale.KOREA, "%.2f", distance / 1000)
 
 @Composable
 private fun TimelineScreen(state: TrackerState, command: (String) -> Unit, select: (Track) -> Unit, dismiss: () -> Unit) {
     var showHistory by remember { mutableStateOf(false) }
     Surface(modifier = Modifier.fillMaxSize(), color = Color.Black) {
-        Column(Modifier.safeDrawingPadding().verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        Column(Modifier.verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Text("나의 타임라인", fontSize = 26.sp, color = Color.White)
@@ -201,7 +211,7 @@ private fun DirectionArrow(angle: Double?, modifier: Modifier) {
     }
 }
 @Composable
-private fun RouteCanvas(state: TrackerState, modifier: Modifier) {
+internal fun RouteCanvas(state: TrackerState, modifier: Modifier) {
     Box(modifier.background(Color(0xFF0D161C), RoundedCornerShape(26.dp)).border(1.dp, Color(0xFF292D31), RoundedCornerShape(26.dp))) {
         Canvas(Modifier.fillMaxSize().padding(26.dp).semantics { contentDescription = "저장된 GPS 경로, 북쪽이 위" }) {
             for (i in 1..4) drawCircle(Color(0xFF202C34), radius = size.minDimension * i / 8, style = Stroke(1f))
@@ -220,6 +230,10 @@ private fun RouteCanvas(state: TrackerState, modifier: Modifier) {
                 drawPath(path, Color(0xFF83919C), style = Stroke(4.dp.toPx(), cap = StrokeCap.Round))
                 state.target?.let { drawCircle(Color(0xFFFFC572), 7.dp.toPx(), offset(it)) }
                 points.firstOrNull()?.let { drawCircle(Color.White, 5.dp.toPx(), offset(it)) }
+                // Sparse automatic checkpoints remain visible, but disconnected gaps have no line.
+                points.forEachIndexed { index, point ->
+                    if (index == 0 || point.segment != points[index - 1].segment) drawCircle(Color(0xFF83919C), 3.dp.toPx(), offset(point))
+                }
                 state.position?.let {
                     val at = offset(it)
                     drawCircle(blue.copy(alpha = .15f), 22.dp.toPx(), at)

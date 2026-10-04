@@ -29,3 +29,5 @@ Android 구현은 [`android/README.md`](android/README.md)를 참고하세요. A
 갤럭시 워치4 이상 Wear OS 버전: [`android/wear/README.md`](android/wear/README.md).
 
 Android 폰과 워치에 같은 릴리즈의 APK를 설치하고 폰에서 `워치에 위치 공유`를 켜면, 직접 연결된 워치가 폰의 새 GPS·정지 감지 값을 우선 사용합니다. 공유 중지·연결 끊김·오래된 값은 워치 GPS로 자동 전환하며 나침반 방향은 워치 센서를 유지합니다. 설정과 제약은 [Android 안내](android/README.md#연결된-워치에-폰-위치-제공)를 참고하세요.
+
+폰 Preview 4는 Clear/Tinted 선택 화면과 홈 아이콘의 일별 타임라인을 제공합니다. 자동 기록을 직접 켜면 기본 30분, 이동 감지 시 10초 주기로 위치를 확인하며 운동·복귀 안내는 별도로 유지합니다. 절전 중 주기는 지연될 수 있습니다. [사용법과 기록 범위](android/README.md#폰-선택-화면과-자동-타임라인-preview-4)를 참고하세요.
