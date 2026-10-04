@@ -17,7 +17,7 @@ object TrackCodec {
             put("id", track.id); put("started", track.started); put("elapsed", track.elapsedSeconds)
             put("points", JSONArray().apply { track.points.forEach { p -> put(JSONObject().apply {
                 put("latitude", p.latitude); put("longitude", p.longitude); put("timestamp", p.timestamp)
-                put("accuracy", p.accuracy.toDouble()); put("segment", p.segment)
+                put("accuracy", p.accuracy.toDouble()); put("segment", p.segment); put("source", p.source.name)
             }) } })
         }) }
     }.toString()
@@ -26,7 +26,8 @@ object TrackCodec {
         return (0 until array.length()).map { i ->
             val obj = array.getJSONObject(i); val points = obj.getJSONArray("points")
             val decoded = (0 until points.length()).map { n -> points.getJSONObject(n).let {
-                TrackPoint(it.getDouble("latitude"), it.getDouble("longitude"), it.getLong("timestamp"), it.getDouble("accuracy").toFloat(), it.getInt("segment"))
+                TrackPoint(it.getDouble("latitude"), it.getDouble("longitude"), it.getLong("timestamp"), it.getDouble("accuracy").toFloat(), it.getInt("segment"),
+                    LocationSource.valueOf(it.optString("source", LocationSource.DEVICE.name)))
             } }
             require(decoded.all { it.latitude.isFinite() && it.longitude.isFinite() && it.latitude in -90.0..90.0 && it.longitude in -180.0..180.0 && it.accuracy.isFinite() && it.accuracy >= 0 })
             Track(obj.getString("id"), obj.getLong("started"), decoded, obj.getLong("elapsed").also { require(it >= 0) })

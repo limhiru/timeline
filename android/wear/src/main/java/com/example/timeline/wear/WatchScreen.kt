@@ -59,10 +59,16 @@ fun WatchScreen(state: TrackerState, command: (String) -> Unit, select: (Track) 
             }
             details -> WatchList("나의 기록") {
                 item { Text("${state.track.points.size}개 GPS 지점", fontSize = 12.sp, color = Color.Gray) }
+                item { Text(when {
+                    state.position == null -> if (state.phoneConnected) "폰 연결됨 · 위치 확인 중" else "워치 GPS 확인 중"
+                    state.locationSource == LocationSource.PHONE -> "위치: 폰 GPS"
+                    state.phoneConnected -> "위치: 워치 GPS · 폰 값 대기"
+                    else -> "위치: 워치 GPS"
+                }, fontSize = 11.sp, color = Blue, textAlign = TextAlign.Center) }
                 item { Text(state.position?.let { "GPS 추정 오차 약 ${it.accuracy.roundToInt()} m" } ?: "GPS 위치 확인 중", fontSize = 11.sp, color = Color.Gray) }
                 item { Text(when (state.motion) {
-                    MotionState.STILL -> "자이로·가속도: 정지 감지"
-                    MotionState.MOVING -> "자이로·가속도: 움직임 감지"
+                    MotionState.STILL -> "${if (state.locationSource == LocationSource.PHONE) "폰" else "워치"} 센서: 정지 감지"
+                    MotionState.MOVING -> "${if (state.locationSource == LocationSource.PHONE) "폰" else "워치"} 센서: 움직임 감지"
                     MotionState.UNKNOWN -> "정지 보정 대기 / 센서 미지원"
                 }, fontSize = 10.sp, color = Color.Gray, textAlign = TextAlign.Center) }
                 item { Chip(onClick = { details = false }, label = { Text("경로 화면") }) }
@@ -126,7 +132,7 @@ private fun GuideCard(state: TrackerState, factor: Float, modifier: Modifier) {
     val active = state.mode == Mode.RETURNING
     val label = if (active) directionLabel(state.targetAngle) else when {
         state.awaitingFix -> "GPS 확인 중"
-        state.mode == Mode.RECORDING -> "경로 기록 중"
+        state.mode == Mode.RECORDING -> if (state.locationSource == LocationSource.PHONE && state.position != null) "폰 GPS 기록 중" else "경로 기록 중"
         state.mode == Mode.PAUSED -> "기록 일시정지"
         else -> "Timeline"
     }
@@ -137,7 +143,7 @@ private fun GuideCard(state: TrackerState, factor: Float, modifier: Modifier) {
             Text(if (active) state.targetDistance?.let { "${it.roundToInt()} m" } ?: "GPS 대기" else when {
                 state.mode == Mode.IDLE -> "기록 시작"
                 state.heldStill -> "정지 보정"
-                state.position != null -> "GPS ~${state.position?.accuracy?.roundToInt()} m"
+                state.position != null -> "${if (state.locationSource == LocationSource.PHONE) "폰" else "GPS"} ~${state.position?.accuracy?.roundToInt()} m"
                 else -> "GPS 대기"
             }, fontSize = (14 * factor).sp, lineHeight = (16 * factor).sp, fontWeight = FontWeight.Bold, color = if (active) Blue else Color.White, maxLines = 1)
         }

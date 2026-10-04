@@ -57,7 +57,7 @@ class MainActivity : ComponentActivity() {
     override fun onStart() { super.onStart(); repository.uiVisible = true }
     override fun onStop() { repository.uiVisible = false; super.onStop() }
     private fun command(action: String) {
-        if (action == TrackingService.STOP || action == TrackingService.PAUSE) { runService(action); return }
+        if (action == TrackingService.STOP || action == TrackingService.PAUSE || action == PhoneLocationService.STOP) { runService(action); return }
         if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
             pendingAction = action
             val permissions = mutableListOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION)
@@ -72,6 +72,10 @@ class MainActivity : ComponentActivity() {
     }
     private fun runService(action: String) {
         try {
+            if (action == PhoneLocationService.STOP) { stopService(Intent(this, PhoneLocationService::class.java)); return }
+            if (action == PhoneLocationService.START) {
+                startForegroundService(Intent(this, PhoneLocationService::class.java).setAction(action)); return
+            }
             val intent = Intent(this, TrackingService::class.java).setAction(action)
             if (action == TrackingService.START || action == TrackingService.RETURN) startForegroundService(intent) else startService(intent)
         } catch (error: Exception) { repository.message("기록 서비스를 실행하지 못했습니다: ${error.message}") }
@@ -94,6 +98,17 @@ private fun TimelineScreen(state: TrackerState, command: (String) -> Unit, selec
                 TextButton(onClick = { showHistory = true }) { Text("기록") }
             }
             Text(dateTime(state.track.started, "yyyy년 M월 d일 (E)"), color = Color.Gray, fontSize = 12.sp)
+            Panel {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("워치에 위치 공유", fontSize = 16.sp)
+                        Text(if (state.phoneSharing) "켜짐 · 연결된 워치의 요청에 폰 GPS 사용" else "워치가 폰 GPS·정지 감지 값을 사용합니다.", fontSize = 12.sp, color = Color.Gray)
+                    }
+                    Switch(checked = state.phoneSharing, onCheckedChange = {
+                        command(if (it) PhoneLocationService.START else PhoneLocationService.STOP)
+                    }, modifier = Modifier.semantics { contentDescription = "워치에 위치 공유" })
+                }
+            }
             RouteCanvas(state, Modifier.fillMaxWidth().height(270.dp))
             if (state.awaitingFix) Text("정확한 GPS 신호를 기다리는 중…", color = blue)
             state.position?.let { position ->

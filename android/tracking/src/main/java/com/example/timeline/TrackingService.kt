@@ -24,6 +24,16 @@ class TrackingService : Service(), LocationListener, SensorEventListener {
     private val gravityRemover = GravityRemover()
     private val headingSmoother = HeadingSmoother()
     private val isWatch by lazy { packageManager.hasSystemFeature(PackageManager.FEATURE_WATCH) }
+    private var localGpsActive = false
+    private val phoneLocation by lazy {
+        WatchPhoneLocationClient(this, { fix ->
+            val accepted = engine.accept(fix.point, System.currentTimeMillis(), fix.sampleMillis, fix.motion, fix.speedLowerBound)
+            if (accepted) lastFix = SystemClock.elapsedRealtime()
+            repository.publish()
+            if (engine.state.mode == Mode.IDLE) finish()
+            accepted
+        }, { refreshLocationProvider(); refreshSensors(); repository.publish() })
+    }
     private var lastSave = 0L
     private var lastFix = 0L
     private var lastHeading = 0L
@@ -31,8 +41,9 @@ class TrackingService : Service(), LocationListener, SensorEventListener {
         override fun run() {
             val now = SystemClock.elapsedRealtime()
             engine.tick(now)
+            refreshLocationProvider()
             refreshSensors()
-            val motion = motionDetector.state(now)
+            val motion = if (isWatch && phoneLocation.prefersPhone(now)) engine.state.motion else motionDetector.state(now)
             engine.state = engine.state.copy(motion = motion, heldStill = engine.state.heldStill && motion == MotionState.STILL)
             if (lastFix != 0L && now - lastFix > 20_000) engine.state = engine.state.copy(position = null, awaitingFix = true, heldStill = false)
             if (lastHeading != 0L && now - lastHeading > 10_000) engine.state = engine.state.copy(heading = null)
@@ -56,12 +67,13 @@ class TrackingService : Service(), LocationListener, SensorEventListener {
         if (action == PAUSE) {
             engine.togglePause(SystemClock.elapsedRealtime()); repository.save(); repository.publish()
             motionDetector.reset(); gravityRemover.reset(); refreshSensors()
+            refreshLocationProvider()
             notifyStatus(); return START_NOT_STICKY
         }
         if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
             repository.message("정확한 위치 권한을 허용해 주세요."); stopSelf(); return START_NOT_STICKY
         }
-        if (!locations.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
+        if (!isWatch && !locations.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
             repository.message("기기의 GPS 위치 서비스를 켜 주세요."); stopSelf(); return START_NOT_STICKY
         }
         if (action == START && engine.state.mode != Mode.IDLE) return START_NOT_STICKY
@@ -76,7 +88,9 @@ class TrackingService : Service(), LocationListener, SensorEventListener {
             lastFix = 0L; lastHeading = 0L
             // GPS timestamps are checked before accepting fixes; no cached location is used.
             locations.removeUpdates(this)
-            locations.requestLocationUpdates(LocationManager.GPS_PROVIDER, if (isWatch) 2000L else 1000L, 0f, this, Looper.getMainLooper())
+            localGpsActive = false
+            if (isWatch) phoneLocation.stop()
+            refreshLocationProvider()
             sensors.unregisterListener(this); sensorsActive = false; motionActive = false
             motionDetector.reset(); gravityRemover.reset(); headingSmoother.reset()
             refreshSensors()
@@ -89,6 +103,7 @@ class TrackingService : Service(), LocationListener, SensorEventListener {
         return START_NOT_STICKY
     }
     override fun onLocationChanged(location: Location) {
+        if (!localGpsActive || (isWatch && phoneLocation.prefersPhone(SystemClock.elapsedRealtime()))) return
         if (!location.hasAccuracy() || abs(SystemClock.elapsedRealtimeNanos() - location.elapsedRealtimeNanos) > 20_000_000_000L) return
         val now = SystemClock.elapsedRealtime()
         // Use only a conservative lower speed bound; missing speed is not evidence of rest.
@@ -103,6 +118,7 @@ class TrackingService : Service(), LocationListener, SensorEventListener {
         if (engine.state.mode == Mode.IDLE) finish()
     }
     override fun onProviderDisabled(provider: String) {
+        if (isWatch && phoneLocation.prefersPhone(SystemClock.elapsedRealtime())) return
         engine.state = engine.state.copy(position = null, awaitingFix = true)
         repository.message("GPS 신호를 기다리는 중입니다. 위치 서비스를 확인해 주세요.")
     }
@@ -159,7 +175,8 @@ class TrackingService : Service(), LocationListener, SensorEventListener {
     }
     private fun refreshSensors() {
         // Motion evidence must continue while the recording screen is hidden, unlike compass UI.
-        val needMotion = engine.state.mode == Mode.RECORDING || engine.state.mode == Mode.RETURNING
+        val needMotion = (engine.state.mode == Mode.RECORDING || engine.state.mode == Mode.RETURNING) &&
+            (!isWatch || !phoneLocation.prefersPhone(SystemClock.elapsedRealtime()))
         if (needMotion != motionActive) {
             motionActive = needMotion; motionDetector.reset(); gravityRemover.reset()
             val gyro = sensors.getDefaultSensor(Sensor.TYPE_GYROSCOPE)
@@ -189,6 +206,28 @@ class TrackingService : Service(), LocationListener, SensorEventListener {
             engine.state = engine.state.copy(heading = null)
         }
     }
+    private fun refreshLocationProvider() {
+        val active = engine.state.mode == Mode.RECORDING || engine.state.mode == Mode.RETURNING
+        val now = SystemClock.elapsedRealtime()
+        if (isWatch) {
+            if (active) { phoneLocation.start(); phoneLocation.tick(now) } else phoneLocation.stop()
+            engine.state = engine.state.copy(phoneConnected = phoneLocation.phoneConnected)
+        }
+        val usingPhone = isWatch && phoneLocation.prefersPhone(now)
+        if (active && isWatch && !usingPhone && engine.state.locationSource == LocationSource.PHONE) {
+            engine.state = engine.state.copy(position = null, awaitingFix = true, heldStill = false)
+        }
+        val wanted = active && !usingPhone
+        if (wanted == localGpsActive) return
+        if (wanted) {
+            try {
+                locations.requestLocationUpdates(LocationManager.GPS_PROVIDER, if (isWatch) 2000L else 1000L, 0f, this, Looper.getMainLooper())
+                localGpsActive = true
+            } catch (error: Exception) {
+                repository.message("기기 GPS를 사용할 수 없습니다: ${error.message}")
+            }
+        } else { locations.removeUpdates(this); localGpsActive = false }
+    }
     private fun notification(): Notification {
         val launch = PendingIntent.getActivity(this, 0, packageManager.getLaunchIntentForPackage(packageName) ?: Intent(), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
         val stop = PendingIntent.getService(this, 1, Intent(this, TrackingService::class.java).setAction(STOP), PendingIntent.FLAG_IMMUTABLE)
@@ -205,8 +244,9 @@ class TrackingService : Service(), LocationListener, SensorEventListener {
     override fun onDestroy() {
         handler.removeCallbacksAndMessages(null)
         locations.removeUpdates(this); sensors.unregisterListener(this)
+        if (isWatch) phoneLocation.stop()
         engine.stop(SystemClock.elapsedRealtime()); repository.save()
-        engine.state = engine.state.copy(serviceRunning = false, heading = null)
+        engine.state = engine.state.copy(serviceRunning = false, heading = null, phoneConnected = false)
         repository.publish(); super.onDestroy()
     }
     companion object {

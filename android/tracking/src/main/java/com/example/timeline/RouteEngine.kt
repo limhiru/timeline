@@ -3,9 +3,10 @@ package com.example.timeline
 import java.util.UUID
 import kotlin.math.*
 
+enum class LocationSource { DEVICE, PHONE }
 data class TrackPoint(
     val latitude: Double, val longitude: Double, val timestamp: Long,
-    val accuracy: Float, val segment: Int = 0
+    val accuracy: Float, val segment: Int = 0, val source: LocationSource = LocationSource.DEVICE
 )
 data class Track(
     val id: String = UUID.randomUUID().toString(), val started: Long = System.currentTimeMillis(),
@@ -32,6 +33,8 @@ data class TrackerState(
     val position: TrackPoint? = null, val heading: Double? = null,
     val targetIndex: Int? = null, val awaitingFix: Boolean = false,
     val motion: MotionState = MotionState.UNKNOWN, val heldStill: Boolean = false,
+    val locationSource: LocationSource = LocationSource.DEVICE, val phoneConnected: Boolean = false,
+    val phoneSharing: Boolean = false,
     val message: String? = null, val history: List<Track> = emptyList(), val serviceRunning: Boolean = false
 ) {
     val target: TrackPoint? get() = targetIndex?.let { track.points.getOrNull(it) }
@@ -51,7 +54,7 @@ class RouteEngine {
         segment = 0; baseSeconds = 0; anchorMillis = monotonicMillis
         state = state.copy(track = Track(started = now), mode = Mode.RECORDING, position = null,
             targetIndex = null, awaitingFix = true, heading = null, message = null,
-            motion = MotionState.UNKNOWN, heldStill = false)
+            motion = MotionState.UNKNOWN, heldStill = false, locationSource = LocationSource.DEVICE)
     }
     fun tick(monotonicMillis: Long) {
         if (state.mode == Mode.RECORDING) {
@@ -86,6 +89,13 @@ class RouteEngine {
         val point = rawPoint
         if (!point.latitude.isFinite() || !point.longitude.isFinite() || point.latitude !in -90.0..90.0 || point.longitude !in -180.0..180.0 ||
             !point.accuracy.isFinite() || point.accuracy !in 0f..30f || abs(now - point.timestamp) > 20_000) return false
+        if (point.source != state.locationSource) {
+            if (point.accuracy > 20f) return false
+            locationFilter.reset()
+            // A source change can contain GPS bias, not actual movement. Never count its jump.
+            if (state.mode == Mode.RECORDING && state.track.points.lastOrNull()?.segment == segment) segment++
+            state = state.copy(locationSource = point.source, position = null, awaitingFix = true, heldStill = false)
+        }
         val fix = locationFilter.accept(point, sampleMillis, motion, reliableSpeed) ?: return false
         return acceptFiltered(fix, motion)
     }
