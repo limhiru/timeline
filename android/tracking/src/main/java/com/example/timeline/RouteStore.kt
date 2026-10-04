@@ -40,6 +40,7 @@ class TimelineApplication : Application() {
 }
 class TrackRepository(app: Application) {
     val engine = RouteEngine()
+    var uiVisible = true
     private val mutable = MutableStateFlow(engine.state)
     val state = mutable.asStateFlow()
     private val file = AtomicFile(File(app.filesDir, "tracks.json"))

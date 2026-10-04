@@ -4,4 +4,4 @@ dependencyResolutionManagement {
     repositories { google(); mavenCentral() }
 }
 rootProject.name = "Timeline"
-include(":app")
+include(":app", ":tracking", ":wear")

@@ -12,7 +12,7 @@ Kotlin + Jetpack Compose로 만든 실제 GPS 경로 기록 앱입니다. Androi
 6. 상단의 `기록` 버튼으로 저장한 경로를 불러올 수 있습니다. 기록·안내가 진행 중일 때는 다른 기록을 선택할 수 없습니다.
 
 ```sh
-./gradlew :app:assembleDebug :app:testDebugUnitTest :app:lintDebug
+./gradlew :app:assembleDebug :tracking:testDebugUnitTest :app:lintDebug
 ```
 
 APK: `app/build/outputs/apk/debug/app-debug.apk`.
@@ -38,3 +38,5 @@ APK: `app/build/outputs/apk/debug/app-debug.apk`.
 `RouteEngineTest`는 거리와 방위 계산, 0/360도 방향 처리, 일시정지 구간과 시간, GPS 오차·위치 점프 필터, 역순 안내·도착, 저장 데이터 왕복, 손상된 데이터 처리에 대한 8개 테스트를 포함합니다.
 
 로컬 APK 빌드·8개 단위 테스트·Lint 검사를 통과했습니다. 에뮬레이터에서 위치/알림 권한 창, 테스트 GPS 좌표 기록, 일시정지·재개, 파일 저장, 앱 종료 후 기록 복원, 역순 안내 표시를 확인했습니다. 실제 센서 정확도와 제조사별 화면 잠금 동작은 실기기 검증이 남아 있습니다.
+
+갤럭시 워치4 이상을 위한 별도 Wear OS 앱은 [`wear/README.md`](wear/README.md)를 참고하세요. 휴대폰과 워치는 `tracking` 모듈의 기록·저장·안내 코드를 공유합니다. 두 기기의 기록 동기화는 구현하지 않았습니다.

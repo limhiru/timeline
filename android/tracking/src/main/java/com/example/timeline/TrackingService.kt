@@ -17,7 +17,8 @@ class TrackingService : Service(), LocationListener, SensorEventListener {
     private lateinit var locations: LocationManager
     private lateinit var sensors: SensorManager
     private val handler = Handler(Looper.getMainLooper())
-    private var headingAccuracy = SensorManager.SENSOR_STATUS_UNRELIABLE
+    private var sensorsActive = false
+    private val isWatch by lazy { packageManager.hasSystemFeature(PackageManager.FEATURE_WATCH) }
     private var lastSave = 0L
     private var lastFix = 0L
     private var lastHeading = 0L
@@ -25,6 +26,7 @@ class TrackingService : Service(), LocationListener, SensorEventListener {
         override fun run() {
             val now = SystemClock.elapsedRealtime()
             engine.tick(now)
+            refreshSensors()
             if (lastFix != 0L && now - lastFix > 20_000) engine.state = engine.state.copy(position = null, awaitingFix = true)
             if (lastHeading != 0L && now - lastHeading > 10_000) engine.state = engine.state.copy(heading = null)
             if (now - lastSave >= 5_000) { repository.save(); lastSave = now }
@@ -65,9 +67,9 @@ class TrackingService : Service(), LocationListener, SensorEventListener {
             engine.state = engine.state.copy(serviceRunning = true)
             // GPS timestamps are checked before accepting fixes; no cached location is used.
             locations.removeUpdates(this)
-            locations.requestLocationUpdates(LocationManager.GPS_PROVIDER, 1000L, 0f, this, Looper.getMainLooper())
-            sensors.unregisterListener(this)
-            sensors.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR)?.let { sensors.registerListener(this, it, SensorManager.SENSOR_DELAY_UI) }
+            locations.requestLocationUpdates(LocationManager.GPS_PROVIDER, if (isWatch) 2000L else 1000L, 0f, this, Looper.getMainLooper())
+            sensors.unregisterListener(this); sensorsActive = false
+            refreshSensors()
             handler.removeCallbacks(ticker); handler.post(ticker)
             repository.publish(); notifyStatus()
         } catch (error: Exception) {
@@ -113,9 +115,16 @@ class TrackingService : Service(), LocationListener, SensorEventListener {
         engine.state = engine.state.copy(heading = if (old == null) heading else (old + relativeAngle(heading, old) * 0.2 + 360) % 360)
         lastHeading = SystemClock.elapsedRealtime(); repository.publish()
     }
-    override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) { headingAccuracy = accuracy }
+    override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) = Unit
+    private fun refreshSensors() {
+        val wanted = !isWatch || repository.uiVisible
+        if (wanted == sensorsActive) return
+        sensorsActive = wanted
+        if (wanted) sensors.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR)?.let { sensors.registerListener(this, it, SensorManager.SENSOR_DELAY_UI) }
+        else { sensors.unregisterListener(this); engine.state = engine.state.copy(heading = null) }
+    }
     private fun notification(): Notification {
-        val launch = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+        val launch = PendingIntent.getActivity(this, 0, packageManager.getLaunchIntentForPackage(packageName) ?: Intent(), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
         val stop = PendingIntent.getService(this, 1, Intent(this, TrackingService::class.java).setAction(STOP), PendingIntent.FLAG_IMMUTABLE)
         return Notification.Builder(this, "tracking").setSmallIcon(android.R.drawable.ic_menu_mylocation)
             .setContentTitle("Timeline")

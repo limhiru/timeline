@@ -25,3 +25,5 @@ swiftc src/RouteStore.swift tests/main.swift -o /tmp/timeline-core-tests
 실기기에서 화면 잠금 중 기록, 권한 거부, 일시정지 이동 후 재개, 앱 재실행 후 경로 복원, 출발점 도착을 확인해 주세요. 시뮬레이터에는 실제 나침반 센서가 없습니다.
 
 Android 구현은 [`android/README.md`](android/README.md)를 참고하세요. Android Studio에서 `android` 폴더를 열거나 `cd android && ./gradlew :app:assembleDebug`로 APK를 생성할 수 있습니다. 실제 GPS 기록, 저장·복원, 역순 안내, 오프라인 경로 화면을 제공합니다.
+
+갤럭시 워치4 이상 Wear OS 버전: [`android/wear/README.md`](android/wear/README.md).
