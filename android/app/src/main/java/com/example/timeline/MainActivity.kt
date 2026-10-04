@@ -54,6 +54,8 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
+    override fun onStart() { super.onStart(); repository.uiVisible = true }
+    override fun onStop() { repository.uiVisible = false; super.onStop() }
     private fun command(action: String) {
         if (action == TrackingService.STOP || action == TrackingService.PAUSE) { runService(action); return }
         if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
@@ -94,6 +96,11 @@ private fun TimelineScreen(state: TrackerState, command: (String) -> Unit, selec
             Text(dateTime(state.track.started, "yyyy년 M월 d일 (E)"), color = Color.Gray, fontSize = 12.sp)
             RouteCanvas(state, Modifier.fillMaxWidth().height(270.dp))
             if (state.awaitingFix) Text("정확한 GPS 신호를 기다리는 중…", color = blue)
+            state.position?.let { position ->
+                Text("GPS 추정 오차 약 ${position.accuracy.roundToInt()} m" +
+                    if (state.heldStill) " · 센서 정지 보정" else " · 좌표 필터 적용",
+                    color = Color.Gray, fontSize = 12.sp)
+            }
             if (state.mode == Mode.RETURNING) Panel {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(18.dp)) {
                     DirectionArrow(state.targetAngle, Modifier.size(54.dp))

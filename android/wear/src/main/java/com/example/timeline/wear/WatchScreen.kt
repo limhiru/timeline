@@ -59,6 +59,12 @@ fun WatchScreen(state: TrackerState, command: (String) -> Unit, select: (Track) 
             }
             details -> WatchList("나의 기록") {
                 item { Text("${state.track.points.size}개 GPS 지점", fontSize = 12.sp, color = Color.Gray) }
+                item { Text(state.position?.let { "GPS 추정 오차 약 ${it.accuracy.roundToInt()} m" } ?: "GPS 위치 확인 중", fontSize = 11.sp, color = Color.Gray) }
+                item { Text(when (state.motion) {
+                    MotionState.STILL -> "자이로·가속도: 정지 감지"
+                    MotionState.MOVING -> "자이로·가속도: 움직임 감지"
+                    MotionState.UNKNOWN -> "정지 보정 대기 / 센서 미지원"
+                }, fontSize = 10.sp, color = Color.Gray, textAlign = TextAlign.Center) }
                 item { Chip(onClick = { details = false }, label = { Text("경로 화면") }) }
                 item { Chip(onClick = { command(if (state.mode == Mode.RETURNING) TrackingService.STOP else TrackingService.RETURN); details = false }, enabled = state.track.points.size >= 2, label = { Text(if (state.mode == Mode.RETURNING) "안내 종료" else "되돌아가기") }) }
                 if (state.mode == Mode.RECORDING || state.mode == Mode.PAUSED) item { Chip(onClick = { confirmStop = true }, label = { Text("기록 종료") }) }
@@ -128,7 +134,12 @@ private fun GuideCard(state: TrackerState, factor: Float, modifier: Modifier) {
         DrawSymbol(if (active && state.targetAngle != null) Symbol.ARROW else Symbol.LIST, Modifier.size((18 * factor).dp), state.targetAngle?.toFloat() ?: 0f)
         Column(Modifier.weight(1f).padding(start = 4.dp)) {
             Text(label, fontSize = (9 * factor).sp, lineHeight = (11 * factor).sp, fontWeight = FontWeight.Bold, maxLines = 1)
-            Text(if (active) state.targetDistance?.let { "${it.roundToInt()} m" } ?: "GPS 대기" else when (state.mode) { Mode.IDLE -> "기록 시작"; else -> "${state.track.points.size}개 지점" }, fontSize = (14 * factor).sp, lineHeight = (16 * factor).sp, fontWeight = FontWeight.Bold, color = if (active) Blue else Color.White, maxLines = 1)
+            Text(if (active) state.targetDistance?.let { "${it.roundToInt()} m" } ?: "GPS 대기" else when {
+                state.mode == Mode.IDLE -> "기록 시작"
+                state.heldStill -> "정지 보정"
+                state.position != null -> "GPS ~${state.position?.accuracy?.roundToInt()} m"
+                else -> "GPS 대기"
+            }, fontSize = (14 * factor).sp, lineHeight = (16 * factor).sp, fontWeight = FontWeight.Bold, color = if (active) Blue else Color.White, maxLines = 1)
         }
         if (active) Column(Modifier.width((29 * factor).dp).border(width = .5.dp, color = Border).padding(start = 4.dp)) {
             Text("다음 지점", fontSize = (7 * factor).sp, lineHeight = (9 * factor).sp, color = Color.Gray)

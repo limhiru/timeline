@@ -31,6 +31,7 @@ data class TrackerState(
     val track: Track = Track(), val mode: Mode = Mode.IDLE,
     val position: TrackPoint? = null, val heading: Double? = null,
     val targetIndex: Int? = null, val awaitingFix: Boolean = false,
+    val motion: MotionState = MotionState.UNKNOWN, val heldStill: Boolean = false,
     val message: String? = null, val history: List<Track> = emptyList(), val serviceRunning: Boolean = false
 ) {
     val target: TrackPoint? get() = targetIndex?.let { track.points.getOrNull(it) }
@@ -44,10 +45,13 @@ class RouteEngine {
     private var segment = 0
     private var anchorMillis: Long? = null
     private var baseSeconds = 0L
+    private val locationFilter = LocationStabilizer()
     fun start(now: Long, monotonicMillis: Long) {
+        locationFilter.reset()
         segment = 0; baseSeconds = 0; anchorMillis = monotonicMillis
         state = state.copy(track = Track(started = now), mode = Mode.RECORDING, position = null,
-            targetIndex = null, awaitingFix = true, heading = null, message = null)
+            targetIndex = null, awaitingFix = true, heading = null, message = null,
+            motion = MotionState.UNKNOWN, heldStill = false)
     }
     fun tick(monotonicMillis: Long) {
         if (state.mode == Mode.RECORDING) {
@@ -58,24 +62,36 @@ class RouteEngine {
     fun togglePause(monotonicMillis: Long) {
         when (state.mode) {
             Mode.RECORDING -> { tick(monotonicMillis); baseSeconds = state.track.elapsedSeconds; anchorMillis = null; state = state.copy(mode = Mode.PAUSED) }
-            Mode.PAUSED -> { segment++; anchorMillis = monotonicMillis; state = state.copy(mode = Mode.RECORDING) }
+            Mode.PAUSED -> {
+                segment++; anchorMillis = monotonicMillis; locationFilter.reset()
+                state = state.copy(mode = Mode.RECORDING, position = null, awaitingFix = true, heldStill = false)
+            }
             else -> Unit
         }
     }
     fun stop(monotonicMillis: Long) {
         tick(monotonicMillis); anchorMillis = null
+        locationFilter.reset()
         state = state.copy(mode = Mode.IDLE, targetIndex = null, awaitingFix = false)
     }
     fun beginReturn(monotonicMillis: Long) {
         if (state.track.points.size < 2) { state = state.copy(message = "경로를 먼저 기록해 주세요."); return }
         tick(monotonicMillis); anchorMillis = null
+        locationFilter.reset()
         // Wait for a new GPS fix rather than navigating from an old saved position.
-        state = state.copy(mode = Mode.RETURNING, targetIndex = null, position = null, awaitingFix = true, message = null)
+        state = state.copy(mode = Mode.RETURNING, targetIndex = null, position = null, awaitingFix = true, message = null, heldStill = false)
     }
-    fun accept(point: TrackPoint, now: Long): Boolean {
+    fun accept(rawPoint: TrackPoint, now: Long, sampleMillis: Long = rawPoint.timestamp,
+               motion: MotionState = MotionState.UNKNOWN, reliableSpeed: Double? = null): Boolean {
+        val point = rawPoint
         if (!point.latitude.isFinite() || !point.longitude.isFinite() || point.latitude !in -90.0..90.0 || point.longitude !in -180.0..180.0 ||
             !point.accuracy.isFinite() || point.accuracy !in 0f..30f || abs(now - point.timestamp) > 20_000) return false
-        state = state.copy(position = point, awaitingFix = false)
+        val fix = locationFilter.accept(point, sampleMillis, motion, reliableSpeed) ?: return false
+        return acceptFiltered(fix, motion)
+    }
+    private fun acceptFiltered(fix: StabilizedFix, motion: MotionState): Boolean {
+        val point = fix.point
+        state = state.copy(position = point, awaitingFix = false, motion = motion, heldStill = fix.heldStill)
         if (state.mode == Mode.RETURNING) {
             var index = state.targetIndex ?: state.track.points.indices.minWithOrNull(compareBy<Int> { distance(point, state.track.points[it]) }.thenByDescending { it }) ?: return true
             val threshold = point.accuracy.toDouble().coerceIn(8.0, 15.0)
@@ -90,17 +106,22 @@ class RouteEngine {
         }
         if (state.mode != Mode.RECORDING) return true
         val last = state.track.points.lastOrNull()
+        if (fix.gap && last?.segment == segment) segment++
         if (last != null) {
             if (point.timestamp <= last.timestamp) return true
             if (last.segment == segment) {
                 val meters = distance(last, point); val seconds = (point.timestamp - last.timestamp) / 1000.0
-                if (meters < 3 || meters / seconds > 12) return true
+                val spacing = max(3.0, max(last.accuracy, point.accuracy) * 0.5)
+                if (fix.heldStill || meters < spacing || meters / seconds > 12) return true
             }
         }
         state = state.copy(track = state.track.copy(points = state.track.points + point.copy(segment = segment)))
         return true
     }
     fun select(track: Track) {
-        if (state.mode == Mode.IDLE) state = state.copy(track = track, position = null, targetIndex = null, heading = null)
+        if (state.mode == Mode.IDLE) {
+            locationFilter.reset()
+            state = state.copy(track = track, position = null, targetIndex = null, heading = null, heldStill = false, motion = MotionState.UNKNOWN)
+        }
     }
 }

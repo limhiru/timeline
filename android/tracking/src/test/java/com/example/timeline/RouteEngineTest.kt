@@ -22,7 +22,8 @@ class RouteEngineTest {
         engine.accept(point(127.021, 170_000), 170_000)
         engine.stop(70_000)
         assertEquals(20L, engine.state.track.elapsedSeconds)
-        assertEquals(177.6, engine.state.track.distance, 2.0)
+        // Filtering trades a small lag for less jitter; pause movement is still excluded.
+        assertTrue(engine.state.track.distance in 150.0..177.7)
         assertEquals(listOf(0, 0, 1, 1), engine.state.track.points.map { it.segment })
     }
     @Test fun badFixesAndJumpsAreNotRecorded() {
@@ -40,11 +41,11 @@ class RouteEngineTest {
         engine.select(Track(points = listOf(point(127.0), point(127.001), point(127.002))))
         engine.beginReturn(0)
         assertTrue(engine.state.awaitingFix)
-        engine.accept(point(127.002), 100_000)
+        engine.accept(point(127.002, accuracy = 3f), 100_000)
         assertEquals(1, engine.state.targetIndex)
-        engine.accept(point(127.001), 100_000)
+        engine.accept(point(127.001, time = 110_000, accuracy = 3f), 110_000)
         assertEquals(0, engine.state.targetIndex)
-        engine.accept(point(127.0), 100_000)
+        engine.accept(point(127.0, time = 120_000, accuracy = 3f), 120_000)
         assertEquals(Mode.IDLE, engine.state.mode)
         assertNull(engine.state.targetIndex)
         assertEquals("출발점에 도착했습니다.", engine.state.message)
